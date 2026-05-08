@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Shinobi Rhythm: Multiplier Edition</title>
+    <style>
+        :root { --c1: #ff0055; --c2: #00ff99; --c3: #00d4ff; --c4: #ffcc00; }
+        body { margin: 0; overflow: hidden; background: #02020a; font-family: 'Arial Black', sans-serif; color: white; touch-action: none; }
+        #ui { position: absolute; top: 0; width: 100%; padding: 20px; display: flex; justify-content: space-between; z-index: 10; pointer-events: none; }
+        .stat-box { 
+            background: rgba(0, 0, 0, 0.6); padding: 10px 20px; border: 2px solid #0ff; 
+            border-radius: 15px; font-size: 20px; box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+            transition: all 0.1s ease; min-width: 120px;
+        }
+        #score-box { border-color: var(--c4); color: var(--c4); box-shadow: 0 0 15px var(--c4); }
+        #combo-box { border-color: var(--c1); color: var(--c1); box-shadow: 0 0 15px var(--c1); text-align: center; }
+        
+        #menu { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(10, 0, 20, 0.95); padding: 30px; border: 3px solid #0ff;
+            border-radius: 30px; text-align: center; z-index: 100; width: 340px;
+        }
+        .setting-item { margin: 12px 0; text-align: left; }
+        label { display: block; font-size: 11px; color: #0ff; margin-bottom: 4px; text-transform: uppercase; }
+        select, input[type=text] { width: 100%; background: #111; border: 1px solid #0ff; color: white; padding: 8px; border-radius: 8px; }
+        .keys-config { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .key-input { display: flex; align-items: center; gap: 6px; background: #1a1a1a; padding: 4px; border-radius: 5px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+        button { 
+            background: linear-gradient(45deg, #ff0055, #00d4ff); border: none; color: white; 
+            padding: 15px 0; width: 100%; font-size: 20px; font-weight: bold; border-radius: 50px;
+            cursor: pointer; margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div class="stat-box" id="score-box">SCORE: <span id="score-val">0</span></div>
+        <div class="stat-box" id="combo-box">x<span id="mult-val">1</span><br><small>COMBO: <span id="combo-val">0</span></small></div>
+        <div class="stat-box" style="border-color: #0ff;">HP: <span id="l">5</span></div>
+    </div>
+
+    <div id="menu">
+        <h2 style="margin: 0 0 10px 0; color: #ff0055;">SHINOBI RHYTHM</h2>
+        <div class="setting-item">
+            <label>Устройство:</label>
+            <select id="platform">
+                <option value="pc">ПК (Клавиатура)</option>
+                <option value="mobile">Телефон (Тапы)</option>
+            </select>
+        </div>
+        <div class="setting-item">
+            <label>Подсказки на шариках:</label>
+            <select id="hints"><option value="on">Включены</option><option value="off">Pro Mode</option></select>
+        </div>
+        <div class="setting-item">
+            <label>Клавиши (для ПК):</label>
+            <div class="keys-config">
+                <div class="key-input"><div class="dot" style="background: var(--c1)"></div><input type="text" id="k1" value="A" maxlength="1"></div>
+                <div class="key-input"><div class="dot" style="background: var(--c2)"></div><input type="text" id="k2" value="S" maxlength="1"></div>
+                <div class="key-input"><div class="dot" style="background: var(--c3)"></div><input type="text" id="k3" value="K" maxlength="1"></div>
+                <div class="key-input"><div class="dot" style="background: var(--c4)"></div><input type="text" id="k4" value="L" maxlength="1"></div>
+            </div>
+        </div>
+        <div class="setting-item">
+            <label>Сложность:</label>
+            <input type="range" id="sp" min="1" max="6" step="0.5" value="2.5" style="width:100%;">
+        </div>
+        <button onclick="start()">LET'S ROCK!</button>
+    </div>
+
+    <canvas id="c"></canvas>
+
+    <script>
+        const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+        const scoreVal = document.getElementById('score-val'), comboVal = document.getElementById('combo-val'), multVal = document.getElementById('mult-val');
+        const comboBtn = document.getElementById('combo-box'), scoreBtn = document.getElementById('score-box'), livesEl = document.getElementById('l'), menu = document.getElementById('menu');
+        const speedInp = document.getElementById('sp'), hintsSel = document.getElementById('hints'), platformSel = document.getElementById('platform');
+
+        let score = 0, combo = 0, lives = 5, active = false, lastT = 0;
+        let balls = [], sparks = [], rings = [], colors = ['#ff0055', '#00ff99', '#00d4ff', '#ffcc00'];
+        let keyLabels = [], keyMap = {};
+
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+
+        const audio = new (window.AudioContext || window.webkitAudioContext)();
+        function playSnd(f, type="sine", d=0.1) {
+            if(audio.state === 'suspended') audio.resume();
+            const o = audio.createOscillator(), g = audio.createGain();
+            o.type = type; o.frequency.setValueAtTime(f, audio.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + d);
+            o.connect(g); g.connect(audio.destination);
+            o.start(); o.stop(audio.currentTime + d);
+        }
+
+        setInterval(() => { if(active) playSnd(50, "square", 0.1); }, 450);
+
+        class Ball {
+            constructor(speed) {
+                this.r = 55; this.life = 1.0;
+                this.x = Math.random() * (canvas.width - 120) + 60;
+                this.y = Math.random() * (canvas.height - 240) + 160;
+                this.type = Math.floor(Math.random() * 4);
+                this.color = colors[this.type];
+                this.vLife = 0.004 * speed;
+                this.label = keyLabels[this.type];
+            }
+            draw() {
+                ctx.save(); ctx.beginPath();
+                ctx.arc(this.x, this.y, this.r * this.life, 0, Math.PI*2);
+                ctx.shadowBlur = 15; ctx.shadowColor = this.color;
+                ctx.strokeStyle = this.color; ctx.lineWidth = 5; ctx.stroke();
+                ctx.fillStyle = this.color + '15'; ctx.fill();
+                if(hintsSel.value === 'on') {
+                    ctx.fillStyle = "white"; ctx.font = "bold 28px Arial";
+                    ctx.textAlign = "center"; ctx.fillText(this.label, this.x, this.y + 10);
+                }
+                ctx.restore();
+            }
+        }
+
+        function updateStats(reset = false) {
+            if(reset) {
+                combo = 0;
+                playSnd(100, "sawtooth", 0.3);
+                comboBtn.style.transform = "scale(0.8)";
+            } else {
+                combo++;
+                // Множитель: за каждое попадание даем (100 * текущее комбо) очков
+                score += (100 * combo);
+                comboBtn.style.transform = "scale(1.2)";
+                scoreBtn.style.transform = "translateY(-5px)";
+            }
+            setTimeout(() => { comboBtn.style.transform = "scale(1)"; scoreBtn.style.transform = "translateY(0)"; }, 100);
+            
+            scoreVal.innerText = score.toLocaleString();
+            comboVal.innerText = combo;
+            multVal.innerText = combo > 0 ? combo : 1;
+        }
+
+        function start() {
+            audio.resume(); active = false;
+            score = 0; combo = 0; lives = 5; balls = []; sparks = []; rings = [];
+            keyLabels = [document.getElementById('k1').value.toUpperCase(), document.getElementById('k2').value.toUpperCase(), 
+                         document.getElementById('k3').value.toUpperCase(), document.getElementById('k4').value.toUpperCase()];
+            keyMap = {}; keyLabels.forEach((k, i) => keyMap[k] = i);
+            livesEl.innerText = lives; scoreVal.innerText = "0"; comboVal.innerText = "0"; multVal.innerText = "1";
+            menu.style.display = 'none';
+            setTimeout(() => active = true, 150);
+        }
+
+        function hit(i) {
+            const b = balls[i];
+            rings.push({x: b.x, y: b.y, r: b.r, a: 1, c: b.color});
+            for(let j=0; j<20; j++) sparks.push({x: b.x, y: b.y, vx: (Math.random()-0.5)*12, vy: (Math.random()-0.5)*12, a: 1, c: b.color});
+            playSnd(200 + b.type * 80, "triangle", 0.2);
+            balls.splice(i, 1);
+            updateStats(false);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if(!active || platformSel.value !== 'pc') return;
+            const k = e.key.toUpperCase();
+            if(keyMap[k] !== undefined) {
+                let target = -1;
+                balls.forEach((b, i) => { if(b.type === keyMap[k]) target = i; });
+                if(target !== -1) hit(target);
+                else updateStats(true); 
+            }
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            if(!active || platformSel.value !== 'mobile') return;
+            const t = e.touches[0];
+            let hitAny = false;
+            balls.forEach((b, i) => {
+                if(Math.hypot(t.clientX - b.x, t.clientY - b.y) < b.r + 25) { hit(i); hitAny = true; }
+            });
+            if(!hitAny) updateStats(true);
+        });
+
+        function loop(t) {
+            ctx.fillStyle = "rgba(2, 2, 8, 0.35)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const speed = parseFloat(speedInp.value);
+            if(active) {
+                if(t - lastT > 900 / speed) {
+                    if(balls.length < 9) balls.push(new Ball(speed));
+                    lastT = t;
+                }
+                balls.forEach((b, i) => {
+                    b.draw(); b.life -= b.vLife;
+                    if(b.life <= 0) {
+                        balls.splice(i, 1); lives--; livesEl.innerText = lives;
+                        updateStats(true);
+                        if(lives <= 0) { active = false; menu.style.display = 'block'; }
+                    }
+                });
+            }
+            rings.forEach((r, i) => {
+                r.r += 5; r.a -= 0.04; ctx.strokeStyle = r.c; ctx.globalAlpha = r.a;
+                ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI*2); ctx.stroke();
+                if(r.a <= 0) rings.splice(i, 1);
+            });
+            sparks.forEach((s, i) => {
+                s.x += s.vx; s.y += s.vy; s.a -= 0.025; ctx.globalAlpha = s.a; ctx.fillStyle = s.c;
+                ctx.fillRect(s.x, s.y, 4, 4); if(s.a <= 0) sparks.splice(i, 1);
+            });
+            ctx.globalAlpha = 1; requestAnimationFrame(loop);
+        }
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>
